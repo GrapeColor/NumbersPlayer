@@ -1,0 +1,11 @@
+_FILEVERSION=1.0.3.0
+_PRODUCTVERSION=1.0.3.0
+Comments=Windows 7à»ç~Ç≈ìÆçÏ
+CompanyName=GrapeColor
+FileDescription=Numbers Player
+FileVersion=1.0.3.0
+InternalName=numplayer
+LegalCopyright=(C) 2019 GrapeColor
+OriginalFilename=numplayer.exe
+ProductName=Numbers Player
+ProductVersion=1.0.3.0

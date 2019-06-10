@@ -1,0 +1,966 @@
+#packopt name "numplayer"
+#packopt version "version.txt"
+#packopt icon "img/icon.ico"
+#packopt lang "1041"
+#packopt upx "0"
+#packopt hide 1
+
+#pack "_settings.ini"
+
+#include "user32.as"
+#uselib "imm32.dll"
+	#func ImmAssociateContext "ImmAssociateContext" int, int
+
+#include "hspmath.as"
+#include "hspdsp.as"
+#include "l_tooltips.as"
+#include "DragAndDropModuleSecond.as"
+#include "tisupport3.as"
+#include "wgini.as"
+
+/* システム定数 */
+#define TITLE_VER "ver.1.03"
+#define TITLE_APP "Numbers Player"
+#define TITLE_NAME TITLE_APP + " - " + fileTitle
+
+/* マクロ */
+#define ctype convVol(%1) int(log10((0.001 + %1) / 100) * 2000)
+#define remainLen dsp_Info(2) - dsp_Info(3)
+#define bgmDisp(%1) sendmsg hStatus, $401, 0, "BGM: " + %1 : trayicontip "BGM: " + %1	/* SB_SETTEXTA */
+
+/* レイアウト定数 */
+#define UI_MARGIN 12
+#define UI_PADDING 6
+#define RADIO_WIDTH 64
+#define VOLUME_WIDTH 150
+#define VOLUME_HEIGHT fontHeight
+#define BUTTON_WIDTH 80
+
+/* メニューバー定数 */
+#enum IDM_NEW = 1	// 新規
+#enum IDM_OPEN		// 開く
+#enum IDM_SAVE		// 上書き保存
+#enum IDM_NAME		// 名前を付けて保存
+#enum IDM_EXIT		// 終了
+#enum IDM_CONTINUE	// 連続再生
+#enum IDM_FADE		// フェード
+#enum IDM_MUTE		// ミュート
+#enum IDM_TRAY		// トレイへ格納
+#enum IDM_SETTING	// サウンド設定
+
+#enum IDM_PLAY		// 音声ファイル再生
+#enum IDM_REGISTER	// 音声ファイル登録
+#enum IDM_DELETE	// 音声ファイル削除
+
+	/* 汎用変数 */
+	dim tempInt
+	dim tempNum
+	sdim tempStr, 2048
+	sdim tempPath, 260
+
+	/* システム */
+	dim sysProcessed	// システムキー処理済みフラグ
+	sysDir = dir_cur	// 起動時のカレントディレクトリ
+	modKeys = "Shift", "Ctrl", "Alt"	// 修飾キーの名前
+
+	/* データ */
+	sdim filePath, 260	// プロファイルのパス
+	fileTitle = "無題"	// プロファイルのファイル名
+	fileChanged = 0		// プロファイルの変更回数
+	tempChanged = 0		// プロファイルの変更回数(一時)
+	
+	sdim soundPath, 260, 30	// 音声ファイルのパス
+	sdim soundName, 64, 30	// 音声ファイルのファイル名
+
+	/* 再生関連変数 */
+	dim onNumber		// 選択されたボタン番号
+	selBgm = -1			// 再生するBGM
+	playingBgm = -1		// 再生中のBGM
+	dim activeOther, 20	// 再生中のSE・OTHER
+
+	/* 設定ファイル読み込み */
+	exist "settings.ini"
+	if (strsize = -1) : bcopy "_settings.ini", "settings.ini"
+
+	setini "settings.ini"
+	getini "device", "select",  deviceSelect	// 選択出力デバイス
+	getini "mode", "continue", enableContinue	// 連続再生有効
+	getini "mode", "fade",     enableFade		// フェード有効
+	getini "mode", "mute",     enableMute		// ミュート有効
+	getini "mode", "tray",     enableTray		// トレイ格納有効
+	getini "volume", "bgm",   soundVolume(0)	// BGM音量
+	getini "volume", "se",    soundVolume(1)	// SE音量
+	getini "volume", "other", soundVolume(2)	// OTHER音量
+	getini "volume", "fade",  soundFade			// フェードの長さ
+	
+/* デバイス初期化 */
+	dsp_Init	// hspdsp初期化
+	if (stat != 0) : dialog "DirectShowを初期化できませんでした。", 1, TITLE_APP
+	
+	sdim deviceNames, dsp_GetDeviceListSize()
+	dsp_GetDeviceList deviceNames	// デバイス一覧取得
+	notesel deviceNames
+	if (notemax <= deviceSelect) : deviceSelect = 0	// 選択したデバイスが無い
+	noteunsel
+
+/* メインウィンドウ */
+*win0
+	screen 0, 664, 368, screen_hide
+	hMain = hWnd
+	title TITLE_NAME
+	syscolor 15 : boxf
+	font "Yu Gothic UI", 24 : color
+
+	trayiconopen
+	if (enableTray == 1) : trayiconstart	// トレイアイコン自動制御
+
+	/* メニューバー */
+	CreatePopupMenu	// ファイル
+	hMenu(1) = stat
+		AppendMenu hMenu(1), 0, IDM_NEW,  "新規プロファイル(&N)\tCtrl+N"
+		AppendMenu hMenu(1), 0, IDM_OPEN, "プロファイルを開く(&O)...\tCtrl+O"
+		AppendMenu hMenu(1), 0, IDM_SAVE, "上書き保存(&S)\tCtrl+S"
+		AppendMenu hMenu(1), 0, IDM_NAME, "名前を付けて保存(&A)...\tCtrl+Shift+S"
+		AppendMenu hMenu(1), $800, 0, ""
+		AppendMenu hMenu(1), 0, IDM_EXIT, TITLE_APP + "の終了(&X)\tAlt+F4"
+
+	CreatePopupMenu	// 設定
+	hMenu(2) = stat
+		AppendMenu hMenu(2), $8 * enableContinue, IDM_CONTINUE, "BGM連続再生(&C)\tShift+C"
+		AppendMenu hMenu(2), $8 * enableFade, IDM_FADE, "BGMフェードアウト(&F)\tShift+F"
+		AppendMenu hMenu(2), $8 * enableMute, IDM_MUTE, "全音ミュート(&M)\tCtrl+M"
+		AppendMenu hMenu(2), $800, 0, ""
+		AppendMenu hMenu(2), $8 * enableTray, IDM_TRAY, "最小化時トレイへ格納(&T)\tCtrl+T"
+		AppendMenu hMenu(2), 0, IDM_SETTING,  "サウンド設定(&I)...\tCtrl+I"
+
+	CreateMenu
+	hMenu(0) = stat
+		AppendMenu hMenu(0), $10, hMenu(1), "ファイル(&F)"
+		AppendMenu hMenu(0), $10, hMenu(2), "設定(&S)"
+		AppendMenu hMenu(0), $4003, 0, TITLE_VER
+
+	SetMenu hWnd, hMenu(0)
+	DrawMenuBar hWnd
+
+	/* ツールチップ */
+	SetToolTips $1
+	
+	/* 見出しラベル */
+	array = "BGM (Shift + )", "SE (Ctrl + )", "OTHER (Alt + )"
+	repeat 3
+		pos UI_MARGIN, UI_MARGIN + ( fontHeight + RADIO_WIDTH + UI_PADDING ) * cnt
+		mes array(cnt)
+		fontHeight = ginfo_mesy
+	loop
+
+	/* 音量ラベル */
+	font "Yu Gothic UI", 16
+
+	array = "BGM音量", "SE音量", "OTHER音量"
+	repeat 3
+		pos ginfo_winx, ginfo_winy : mes array(cnt)
+		pos ginfo_winx - UI_MARGIN - VOLUME_WIDTH - ginfo_mesx - 2, UI_MARGIN + ( fontHeight + RADIO_WIDTH + UI_PADDING ) * cnt
+		mes array(cnt)
+	loop
+
+	/* ボリュームコントロール */
+	array = "Shift + ↑/↓", "Ctrl + ↑/↓", "Alt + ↑/↓"
+	repeat 3
+		pos ginfo_winx - UI_MARGIN - VOLUME_WIDTH, UI_MARGIN + ( VOLUME_HEIGHT + RADIO_WIDTH + UI_PADDING ) * cnt
+		winobj "msctls_trackbar32", "", , $50000101, VOLUME_WIDTH, VOLUME_HEIGHT
+		if (cnt == 0) : nTrackbar = stat
+		hTrackbar(cnt) = objinfo_hwnd(stat)
+		AddToolTips stat, array(cnt)
+		sendmsg hTrackbar(cnt), $414, 50	/* TBM_SETTICFREQ */
+		sendmsg hTrackbar(cnt), $405, 1, soundVolume(cnt)	/* TBM_SETPOS */
+	loop
+
+	/* ナンバーボタン */
+	font "Yu Gothic UI", 40, 1
+	objmode 2
+	objsize RADIO_WIDTH, RADIO_WIDTH
+
+	; BGM
+	posBgmX = UI_MARGIN : posBgmY = UI_MARGIN + (fontHeight + RADIO_WIDTH + UI_PADDING) * 0 + fontHeight
+	pos posBgmX, posBgmY
+	repeat 10
+		button gosub "" + ((cnt + 1) \ 10), *pushNumber
+		if (cnt == 0) : nButton = stat	// 先頭オブジェクトID
+		SetWindowLong objinfo_hwnd(stat), -16, $58001002	// ( WS_DISABLED | BS_CHECKBOX | BS_PUSHLIKE )
+		pos ginfo_cx + RADIO_WIDTH, ginfo_cy - RADIO_WIDTH
+	loop
+
+	; SE
+	posSeX = UI_MARGIN : posSeY = UI_MARGIN + (fontHeight + RADIO_WIDTH + UI_PADDING) * 1 + fontHeight
+	pos posSeX, posSeY
+	repeat 10
+		button gosub "" + ((cnt + 1) \ 10), *pushNumber
+		SetWindowLong objinfo_hwnd(stat), -16, $58001002	// ( WS_DISABLED | BS_CHECKBOX | BS_PUSHLIKE )
+		pos ginfo_cx + RADIO_WIDTH, ginfo_cy - RADIO_WIDTH
+	loop
+
+	; OTHER
+	posOtherX = UI_MARGIN : posOtherY = UI_MARGIN + (fontHeight + RADIO_WIDTH + UI_PADDING) * 2 + fontHeight
+	pos posOtherX, posOtherY
+	repeat 10
+		button gosub "" + ((cnt + 1) \ 10), *pushNumber
+		SetWindowLong objinfo_hwnd(stat), -16, $58001002	// ( WS_DISABLED | BS_CHECKBOX | BS_PUSHLIKE )
+		pos ginfo_cx + RADIO_WIDTH, ginfo_cy - RADIO_WIDTH
+	loop
+
+	/* ステータスバー */
+	winobj "msctls_statusbar32", "", , $50000000
+	hStatus = objinfo_hwnd(stat)
+	tempInt = ginfo_winx * 3 / 4, -1
+	sendmsg hStatus, $404, 2, varptr (tempInt)	/* SB_SETPARTS */
+	bgmDisp ""
+
+	/* 右クリックメニュー */
+	CreatePopupMenu
+	hMenu(3) = stat
+		AppendMenu hMenu(3), 0, IDM_PLAY, "再生 / 停止(&P)"
+		AppendMenu hMenu(3), $800, 0, ""
+		AppendMenu hMenu(3), 0, IDM_REGISTER, "登録(&R)..."
+		AppendMenu hMenu(3), 0, IDM_DELETE,   "削除(&D)"
+
+/* 設定ダイアログ */
+*win1
+	screen 1, 480, 148, screen_hide + screen_fixedsize
+	hSetting = hWnd
+	title "サウンド設定"
+	
+	GetWindowLong hSetting, -16
+	SetWindowLong hSetting, -16, stat & ($70000) ^ stat
+	SetWindowLong hSetting, -8, hMain
+	SetWindowPos hSetting, 0, 0, 0, 0, 0, $27
+	
+	syscolor 15 : boxf
+	font "Yu Gothic UI", 15 : color
+	objmode 2 : objsize ginfo_winx - UI_MARGIN * 2
+	
+	pos UI_MARGIN, UI_MARGIN
+	mes "出力デバイス"
+	combox inputSelect, , deviceNames
+
+	pos UI_MARGIN, ginfo_cy + UI_PADDING
+	mes "フェードアウトの長さ [ミリ秒]"
+	input inputFade, , , 4
+	hTemp = objinfo_hwnd(stat)
+	GetWindowLong hTemp, -16
+	SetWindowLong hTemp, -16, stat | $2000	// 数値のみ入力
+	ImmAssociateContext hTemp, 0	// IME無効化
+
+	objsize BUTTON_WIDTH
+	pos ginfo_winx - UI_MARGIN - BUTTON_WIDTH * 2, ginfo_cy + UI_PADDING
+	button gosub "OK", *confirmSetting
+
+	pos ginfo_winx - UI_MARGIN - BUTTON_WIDTH, ginfo_cy - 24
+	button gosub "キャンセル", *cancelSetting
+
+/* コマンドラインからのプロファイル読み込み */
+	gsel 0, 1
+
+	wait 0	// 描画待ち
+	if (dir_cmdline != "") {
+		tempPath = dir_cmdline
+		strrep tempPath, "\"", ""
+		gosub *fileLoad
+	} else {
+		gosub *fileReload
+	}
+
+/* イベント割り込み設定 */
+*events
+	onexit gosub *exit		// 終了処理
+	onerror gosub *error	// 例外エラー処理
+	oncmd gosub *contextMenu, $7B	/* WM_CONTEXTMENU */
+	oncmd gosub *keyDown, $100		/* WM_KEYDOWN */
+	oncmd gosub *keyDown, $104		/* WM_SYSKEYDOWN */
+	oncmd gosub *command0, $111		/* WM_COMMAND */
+	oncmd gosub *sysCommand, $112	/* WM_SYSCOMMAND */
+	oncmd gosub *changeVolume, $114	/* WM_HSCROLL */
+	
+	DandD_SetSubLabel *dropFile	// D&Dイベント
+	DandD_SetWindow 1	// D&D許可
+	
+/* メインループ */
+*main
+	wait 10
+	
+	/* ループ・連続再生処理 */
+	dsp_SetActiveSel playingBgm
+	if (playingBgm != -1 && remainLen == 0) {
+		if (enableContinue == 1) {
+			gosub *nextBgm
+		} else {
+			gosub *playLoop
+		}
+	}
+
+	/* SE・OTHERの選択解除処理 */
+	repeat 20
+		if (activeOther(cnt) == 0) : continue
+		dsp_SetActiveSel cnt + 10
+		if (remainLen == 0) {
+			sendmsg objinfo_hwnd(cnt + 10 + nButton), $F1, 0	/* (選択解除)BM_SETCHECK */
+			activeOther(cnt) = 0
+		}
+	loop
+	
+	goto *main
+
+/* ウィンドウメッセージ・UI処理 */
+*command0	// メニューバーイベント(WM_COMMAND)
+	/* メニューバーからの割り込み */
+	if (lParam == 0) {
+		switch LOWORD(wParam)
+			/* hMenu(1) */
+			case IDM_NEW	// 新規作成
+				gosub *fileNew
+				swbreak
+			case IDM_OPEN	// 開く
+				gosub *fileOpen
+				swbreak
+			case IDM_SAVE	// 上書き保存
+				gosub *fileOver
+				swbreak
+			case IDM_NAME	// 名前を付けて保存
+				gosub *fileName
+				swbreak
+			case IDM_EXIT	// 終了
+				gosub *exit
+				swbreak
+			
+			/* hMenu(2) */
+			case IDM_CONTINUE	// 連続再生
+				gosub *switchContinue
+				swbreak
+			case IDM_FADE	// フェード
+				gosub *switchFade
+				swbreak
+			case IDM_MUTE	// ミュート
+				gosub *switchMute
+				swbreak
+			case IDM_TRAY	// トレイへ格納
+				gosub *switchTray
+				swbreak
+			case IDM_SETTING	// サウンド設定
+				gosub *openSetting
+				swbreak
+			
+			default : swbreak
+		swend
+		return
+	}
+	return
+	
+*sysCommand	// システムコマンド(WM_SYSCOMMAND)
+	if ((wParam & 0xfff0) == 0xf100 && sysProcessed == 1) {	/* SC_KEYMENU */
+		sysProcessed = 0
+		return 0
+	}
+	return
+
+*contextMenu	// コンテキストメニュー表示(WM_CONTEXTMENU)
+	POINT = ginfo_mx, ginfo_my
+	ScreenToClient hWnd, varptr(POINT)
+	
+	if ( POINT(0) >= UI_MARGIN && POINT(0) <= UI_MARGIN + RADIO_WIDTH * 10 - 1 ) {
+		onNumber = (POINT(0) - UI_MARGIN) / RADIO_WIDTH
+		
+		if ( POINT(1) >= posBgmY && POINT(1) <= posBgmY + RADIO_WIDTH - 1 ) {	// BGMボタン
+			ModifyMenu hMenu(3), IDM_PLAY, $0, IDM_PLAY, "再生 / 停止(&P)\t" + modKeys(onNumber / 10) + " + " + ((onNumber + 1) \ 10)
+		} elseif ( POINT(1) >= posSeY && POINT(1) <= posSeY + RADIO_WIDTH - 1 ) {	// SEボタン
+			onNumber += 10
+			ModifyMenu hMenu(3), IDM_PLAY, $0, IDM_PLAY, "再生(&P)\t" + modKeys(onNumber / 10) + " + " + ((onNumber + 1) \ 10)
+		} elseif ( POINT(1) >= posOtherY && POINT(1) <= posOtherY + RADIO_WIDTH - 1 ) {	// OTHERボタン
+			onNumber += 20
+			ModifyMenu hMenu(3), IDM_PLAY, $0, IDM_PLAY, "再生 / 停止(&P)\t" + modKeys(onNumber / 10) + " + " + ((onNumber + 1) \ 10)
+		} else : return
+
+		TrackPopupMenu hMenu(3), $100, ginfo_mx, ginfo_my, 0, hWnd, 0
+		if (stat == IDM_PLAY)     {	// 再生
+			if (onNumber < 10) : gosub *changeBgm : return
+			gosub *playOther
+		}
+		if (stat == IDM_REGISTER) : gosub *soundOpen	// 登録
+		if (stat == IDM_DELETE)   : gosub *soundDelete	// 削除
+	}
+	return
+
+*keyDown	// キー割り込み(WM_KEYDOWN, WM_SYSKEYDOWN)
+	logmes "KEYCODE: " + wParam
+	switch wParam
+		case 18 : case 121	// Alt, F10
+			return
+			swbreak
+	
+		case 'N'
+			// Ctrl + N (新規)
+			getkey tempInt, 17 : if (tempInt == 1) : gosub *fileNew
+			swbreak
+		case 'O'
+			// Ctrl + O (開く)
+			getkey tempInt, 17 : if (tempInt == 1) : gosub *fileOpen
+			swbreak
+		case 'S'
+			// Ctrl + S (保存)
+			getkey tempInt, 17 : if (tempInt == 1) {
+				// Ctrl + Shift + S
+				getkey tempInt, 16 : if (tempInt == 1) {
+					gosub *fileName
+				} else : gosub *fileOver
+			}
+			swbreak
+			
+		case 'C'
+			// Shift + C (連続再生)
+			getkey tempInt, 16 : if (tempInt == 1) : gosub *switchContinue
+			swbreak
+		case 'F'
+			// Shift + F (フェード)
+			getkey tempInt, 16 : if (tempInt == 1) : gosub *switchFade
+			swbreak
+		case 'M'
+			// Ctrl + M (ミュート)
+			getkey tempInt, 17 : if (tempInt == 1) : gosub *switchMute
+			swbreak
+		case 'T'
+			// Ctrl + T (トレイへ格納)
+			getkey tempInt, 17 : if (tempInt == 1) : gosub *switchTray
+			swbreak
+		case 'I'
+			// Ctrl + I (設定)
+			getkey tempInt, 17 : if (tempInt == 1) : gosub *openSetting
+			swbreak
+		
+		case 37
+			// Shift + '←' (前のBGM)
+			getkey tempInt, 16 : if (tempInt == 1) : gosub *previousBgm
+			swbreak
+
+		case 39
+			// Shift + '→' (次のBGM)
+			getkey tempInt, 16 : if (tempInt == 1) : gosub *nextBgm
+			swbreak
+
+		case 38	// '↑' (音量を上げる)
+			tempNum = -1
+			getkey tempInt, 16 : if (tempInt == 1) : tempNum = 0	// Shift(BGM)
+			getkey tempInt, 17 : if (tempInt == 1) : tempNum = 1	// Ctrl(SE)
+			getkey tempInt, 18 : if (tempInt == 1) : tempNum = 2	// Alt(OTHER)
+			if (tempNum == -1) : return
+
+			// 音量を+10する
+			soundVolume(tempNum) = limit(soundVolume(tempNum) + 10, 0, 100)
+			sendmsg hTrackbar(tempNum), $405, 1, soundVolume(tempNum)
+			repeat 10, 10 * tempNum
+				dsp_SetActiveSel cnt
+				dsp_SetVolume 0, convVol( soundVolume(tempNum) * (1 - enableMute) )
+			loop
+			swbreak
+
+		case 40	// '↓' (音量を下げる)
+			tempNum = -1
+			getkey tempInt, 16 : if (tempInt == 1) : tempNum = 0	// Shift(BGM)
+			getkey tempInt, 17 : if (tempInt == 1) : tempNum = 1	// Ctrl(SE)
+			getkey tempInt, 18 : if (tempInt == 1) : tempNum = 2	// Alt(OTHER)
+			if (tempNum == -1) : return
+			
+			// 音量を-10する
+			soundVolume(tempNum) = limit(soundVolume(tempNum) - 10, 0, 100)
+			sendmsg hTrackbar(tempNum), $405, 1, soundVolume(tempNum)
+			repeat 10, 10 * tempNum
+				dsp_SetActiveSel cnt
+				dsp_SetVolume 0, convVol( soundVolume(tempNum) * (1 - enableMute) )
+			loop
+			swbreak
+		
+		default
+			// メインキーボード数字キー(テンキー未対応)
+			if ( wParam >= 48 && wParam <= 57 ) {
+				onNumber = (wParam - 9) \ 10
+				
+				// Shift + 0 ～ 9 (BGM)
+				getkey tempInt, 16 : if (tempInt == 1) {
+					gosub *changeBgm
+				}
+				// Ctrl + 0 ～ 9 (SE)
+				getkey tempInt, 17 : if (tempInt == 1) {
+					onNumber += 10
+					gosub *playOther
+				}
+				// Alt + 0 ～ 9 (OTHER)
+				getkey tempInt, 18 : if (tempInt == 1) {
+					onNumber += 20
+					gosub *playOther
+					sysProcessed = 1	// システムキー処理済みフラグ
+					return
+				}
+			}
+			swbreak
+	swend
+	return
+
+*dropFile	// D&Dイベント(WM_DROPFILES)
+	gsel 0, 1	// メインウィンドウをアクティブ化
+	
+	DandD_GetList tempStr	// ドロップされたファイルパス取得
+	notesel tempStr
+	
+	noteget tempPath, 0	// nppファイルならばプロファイルロードへ
+	if (getpath(tempPath, 2) == ".npp") {
+		gosub *fileLoad
+	} else {
+		POINT = DandD_GetInfo(1), DandD_GetInfo(2)
+	
+		if ( POINT(0) >= UI_MARGIN && POINT(0) <= UI_MARGIN + RADIO_WIDTH * 10 - 1 ) {
+			onNumber = (POINT(0) - UI_MARGIN) / RADIO_WIDTH
+			
+			if ( POINT(1) >= posBgmY && POINT(1) <= posBgmY + RADIO_WIDTH - 1 ) {	// BGMボタン
+			} elseif ( POINT(1) >= posSeY && POINT(1) <= posSeY + RADIO_WIDTH - 1 ) {	// SEボタン
+				onNumber += 10
+			} elseif ( POINT(1) >= posOtherY && POINT(1) <= posOtherY + RADIO_WIDTH - 1 ) {	// OTHERボタン
+				onNumber += 20
+			} else : return
+	
+			// ドロップ数分追加(0番まで)
+			sendmsg hStatus, $401, 1, "音声ファイル読み込み中..."	/* SB_SETTEXTA */
+			repeat DandD_GetInfo(0)
+				gosub *soundRegister
+				if (onNumber \ 10 = 9) : break
+				onNumber++
+				noteget tempPath, cnt + 1
+			loop
+			sendmsg hStatus, $401, 1, ""	/* SB_SETTEXTA */
+		}
+	}
+	noteunsel
+	return
+
+*switchContinue	// 連続再生
+	GetMenuState hMenu(2), IDM_CONTINUE, $0 /* MF_BYCOMMAND */
+	if (stat & $8 /* MF_CHECKED */) {
+		/* 1曲モード */
+		CheckMenuItem hMenu(2), IDM_CONTINUE, $0
+		enableContinue = 0
+	} else {
+		/* 連続再生モード */
+		CheckMenuItem hMenu(2), IDM_CONTINUE, $8
+		enableContinue = 1
+	}
+	return
+
+*switchFade	//フェード
+	GetMenuState hMenu(2), IDM_FADE, $0 /* MF_BYCOMMAND */
+	if (stat & $8 /* MF_CHECKED */) {
+		CheckMenuItem hMenu(2), IDM_FADE, $0
+		enableFade = 0
+	} else {
+		CheckMenuItem hMenu(2), IDM_FADE, $8
+		enableFade = 1
+	}
+	return
+
+*switchMute	// ミュート
+	GetMenuState hMenu(2), IDM_MUTE, $0 /* MF_BYCOMMAND */
+	if (stat & $8 /* MF_CHECKED */) {
+		CheckMenuItem hMenu(2), IDM_MUTE, $0
+		enableMute = 0
+	} else {
+		CheckMenuItem hMenu(2), IDM_MUTE, $8
+		enableMute = 1
+	}
+	gosub *applyVolume	// 音量反映
+	return
+
+*switchTray	// トレイへ格納
+	GetMenuState hMenu(2), IDM_TRAY, $0 /* MF_BYCOMMAND */
+	if (stat & $8 /* MF_CHECKED */) {
+		CheckMenuItem hMenu(2), IDM_TRAY, $0
+		trayiconstop
+		enableTray = 0
+	} else {
+		CheckMenuItem hMenu(2), IDM_TRAY, $8
+		trayiconstart
+		enableTray = 1
+	}
+	return
+
+*pushNumber	// 再生ボタン
+	onNumber = stat - nButton
+	SetFocus hWnd	// フォーカスを親ウィンドウに戻す
+	
+	if (onNumber < 10) : gosub *changeBGM : return	// BGM再生ボタン
+	gosub *playOther	// SE・OTHER再生ボタン
+	return
+
+/* ファイル操作処理 */
+*fileNew	// プロファイル新規作成
+	if (fileChanged != 0) {	// 変更保存確認
+		MessageBox hwnd, "プロファイルの変更内容を保存しますか。", TITLE_NAME, 0x43
+		if (stat = 2) : return
+		if (stat = 6) : gosub *fileOver
+	}
+
+	// データ初期化
+	repeat 30
+		onNumber = cnt
+		gosub *soundDelete
+	loop
+
+	filePath = ""
+	fileTitle = "無題"
+	title TITLE_NAME
+	
+	gosub *fileReload
+	fileChanged = 0	// 変更積算初期化
+	return
+
+*fileOpen	// プロファイル開く
+	gosub *fileConfirm
+	
+	dialog "npp", 16, "プロファイル"
+	if (stat == 0) : return
+
+	tempPath = refstr
+
+*fileLoad	// プロファイル読込(tempPathにプロファイルのパス)
+	exist tempPath	// ファイル有無確認
+	if (strsize == -1) : return
+
+	// データ初期化
+	filePath = tempPath
+	fileTitle = getpath(filePath, 8)
+	title TITLE_NAME
+
+	// ファイル読み込み(INIファイル形式)
+	setini filePath
+	repeat 30
+		getini "sound" + cnt, "path", soundPath(cnt)
+		if (soundPath(cnt) != "") : soundName(cnt) = getpath(soundPath(cnt), 9)
+	loop
+	fileChanged = 0	// 変更積算初期化
+
+	gosub *fileReload
+	return
+
+*fileReload	// DirectShowロード(gsel 0で呼び出すこと)
+	// 再生中の音声を停止
+	if (playingBgm != -1) {
+		onNumber = playingBgm
+		gosub *changeBgm
+	}
+	gosub *stopAllOther
+	
+	sendmsg hStatus, $401, 1, "音声ファイル読み込み中..."	/* SB_SETTEXTA */
+
+	// 音声ファイル登録
+	tempChanged = fileChanged
+	repeat 30
+		onNumber = cnt
+		tempPath = soundPath(onNumber)
+		gosub *soundRegister
+	loop
+	fileChanged = tempChanged
+	gosub *applyVolume
+	
+	sendmsg hStatus, $401, 1, ""	/* SB_SETTEXTA */
+	return
+
+*fileConfirm	// ファイル変更確認
+	if (fileChanged == 0) : return	// 変更なし
+	
+	MessageBox hwnd, "プロファイルの変更内容を保存しますか。", TITLE_NAME, 0x43
+	if (stat = 2) : return
+	if (stat = 6) : gosub *fileOver
+	return
+
+*fileOver	// プロファイル上書き
+	if (filePath == "") {
+		gosub *fileName
+		return
+	}
+	gosub *fileSave
+	return
+
+*fileName	// プロファイル名前を付けて保存
+	dialog "npp", 17, "プロファイル"
+	if (stat == 0) : return
+	
+	filePath = refstr
+	if (getpath(filePath, 2) == "") : filePath += ".npp"	// 拡張子補完
+	fileTitle = getpath(filePath, 8)
+	title TITLE_NAME
+
+*fileSave	// プロファイル保存(INIファイル形式)
+	setini filePath
+	repeat 30
+		writeini "sound" + cnt, "path", soundPath(cnt)
+	loop
+	
+	fileChanged = 0	// 変更積算初期化
+	return
+
+*soundOpen		// 音声ファイルを開く
+	dialog "", 16, ""
+	if (stat == 0) : return
+
+	// プロファイルが開かれた場合
+	tempPath = refstr
+	if (getpath(tempPath, 2) == ".npp") {
+		if (fileChanged != 0) {	// 変更保存確認
+			MessageBox hwnd, "プロファイルの変更内容を保存しますか。", TITLE_NAME, 0x43
+			if (stat = 2) : return
+			if (stat = 6) : gosub *fileOver
+		}
+		gosub *fileLoad
+		return
+	}
+
+*soundRegister	// 音声ファイルを登録(onNumberに削除したい番号)
+	if (soundPath(onNumber) != "") : gosub *soundDelete
+
+	// 音声ファイルオープンを試行
+	dsp_SetActiveSel onNumber
+	dsp_Open tempPath, OPEN_NO_RENDERER, hWnd, 0, 0, deviceSelect
+	if (stat != 0 || dsp_Info(2) <= 0) {	// 失敗
+		dsp_Close
+		objenable onNumber + nButton, 0
+		return
+	}
+	dsp_SetVolume 0, convVol( soundVolume(onNumber / 10) * (1 - enableMute) )	// 音量反映
+	
+	// 音声ファイル登録
+	soundPath(onNumber) = tempPath	// ファイルパス登録
+	soundName(onNumber) = getpath(tempPath, 9)	// ファイル名登録
+	objenable onNumber + nButton, 1
+	AddToolTips onNumber + nButton, soundName(onNumber)
+	
+	fileChanged++	// 変更積算加算
+	return
+
+*soundDelete	// 音声ファイルを削除(onNumberに削除したい番号)
+	if (onNumber == playingBgm) : gosub *changeBgm
+	if (onNumber >= 10) : gosub *stopOther
+
+	dsp_SetActiveSel onNumber
+	dsp_Close
+	soundPath(onNumber) = ""
+	objenable onNumber + nButton, 0
+	
+	fileChanged++	// 変更積算加算
+	return
+
+/* サウンド系処理 */
+*changeVolume	// 音量変更(WM_HSCROLL)
+	if (lParam == hTrackbar(0)) : tempNum = 0	// BGM
+	if (lParam == hTrackbar(1)) : tempNum = 1	// SE
+	if (lParam == hTrackbar(2)) : tempNum = 2	// OTHER
+	
+	sendmsg hTrackbar(tempNum), $400	/* TBM_GETPOS */
+	soundVolume(tempNum) = stat
+	repeat 10, 10 * tempNum
+		dsp_SetActiveSel cnt
+		dsp_SetVolume 0, convVol( soundVolume(tempNum) * (1 - enableMute) )
+	loop
+	
+	SetFocus hWnd	// フォーカスを親ウィンドウに戻す
+	return
+
+*applyVolume	// 全音量反映
+	repeat 30
+		dsp_SetActiveSel cnt
+		dsp_SetVolume 0, convVol( soundVolume(cnt / 10) * (1 - enableMute) )
+	loop
+	return
+
+*changeBgm	// 再生BGM変更(onNumberに再生したい番号)
+	if (soundPath(onNumber) == "") : return
+	if (onNumber == selBgm) {
+		/* 停止 */
+		sendmsg objinfo_hwnd(onNumber + nButton), $F1, 0	/* (選択解除)BM_SETCHECK */
+		selBgm = -1
+	} else {
+		/* 再生 */
+		if (selBgm != -1) : sendmsg objinfo_hwnd(selBgm + nButton), $F1, 0	/* (選択解除)BM_SETCHECK */
+		sendmsg objinfo_hwnd(onNumber + nButton), $F1, 1	/* (選択)BM_SETCHECK */
+		selBgm = onNumber
+	}
+
+*playBgm	// BGM再生(selBgmに再生したい番号)
+	// フェード処理
+	dsp_SetActiveSel playingBgm
+	if (enableFade == 1 && playingBgm != -1 && remainLen != 0) {
+		if (fadeNow == 1) : return
+		
+		fadeNow = 1
+		repeat soundFade / 10, 1
+			dsp_SetActiveSel playingBgm
+			dsp_SetVolume 0, convVol( soundVolume(0) - int(10.0 * soundVolume(0) / soundFade * cnt) )
+			await 10
+		loop
+		fadeNow = 0
+	}
+
+	// 再生中BGMの停止
+	dsp_Stop
+	dsp_SetVolume 0, convVol( soundVolume(0) )	// 音量を元に戻す
+	
+	playingBgm = selBgm
+	if (playingBgm == -1) {
+		bgmDisp ""
+		return
+	}
+	
+	if (soundPath(selBgm) == "") : return
+
+*playLoop	// ループ再生(selBgmに再生したい番号)
+	// 再生開始処理
+	dsp_SetActiveSel playingBgm
+	dsp_SetSeek2 0
+	dsp_Play2
+	
+	playingBgm = selBgm
+	
+	bgmDisp soundName(playingBgm)
+	
+	return
+
+*playOther	// SE・OTHER再生(onNumberに再生したい番号)
+	if (soundPath(onNumber) == "") : return
+	
+	dsp_SetActiveSel onNumber
+	if ( onNumber >= 20 && dsp_GetState() == 2 && remainLen != 0 ) {	// OTHER再生中の場合
+		dsp_Stop
+		activeOther(onNumber - 10) = 0
+		sendmsg objinfo_hwnd(onNumber + nButton), $F1, 0	/* (選択解除)BM_SETCHECK */
+		return
+	}
+	
+	dsp_SetSeek2 0
+	dsp_Play2
+	
+	activeOther(onNumber - 10) = 1
+	sendmsg objinfo_hwnd(onNumber + nButton), $F1, 1	/* (選択)BM_SETCHECK */
+	return
+
+*stopOther	// SE・OTHER停止(onNumberに停止したい番号)
+	dsp_SetActiveSel onNumber
+	dsp_Stop
+	activeOther(onNumber - 10) = 0
+	sendmsg objinfo_hwnd(onNumber + nButton), $F1, 0	/* (選択解除)BM_SETCHECK */
+	return
+
+*stopAllOther	// SE・OTHER全停止
+	repeat 20
+		dsp_SetActiveSel cnt + 10
+		dsp_Stop
+		activeOther(cnt) = 0
+		sendmsg objinfo_hwnd(cnt + nButton + 10), $F1, 0	/* (選択解除)BM_SETCHECK */
+	loop
+	return
+
+*nextBgm	// 次のBGM再生
+	repeat 10, selBgm + 1
+		tempInt = cnt \ 10
+		if (tempInt = selBgm) : gosub *playBgm : break	// 1曲しかない
+		if (soundPath(tempInt) != "") {	// 次のBGMを発見
+			onNumber = tempInt
+			gosub *changeBgm
+			break
+		}
+	loop
+	return
+
+*previousBgm	// 前のBGM再生
+	repeat 10, 9 - selBgm + 1
+		tempInt = 9 - cnt \ 10
+		if (tempInt = selBgm) : gosub *playBgm : break	// 1曲しかない
+		if (soundPath(tempInt) != "") {	// 前のBGMを発見
+			onNumber = tempInt
+			gosub *changeBgm
+			break
+		}
+	loop
+	return
+
+/* 設定ダイアログ処理 */
+*openSetting	// サウンド設定ウィンドウ表示
+	gsel 0
+	mainx = ginfo_wx1  : mainy = ginfo_wy1
+	mainw = ginfo_wx2 - ginfo_wx1 : mainh = ginfo_wy2 - ginfo_wy1
+	EnableWindow hMain, 0
+
+	// 既定データ反映
+	gsel 1
+	inputSelect = deviceSelect
+	sendmsg objinfo_hwnd(0), $14E, inputSelect	/* CB_SETCURSEL */
+	objprm 1, soundFade
+
+	// ウィンドウ表示
+	MoveWindow hWnd, mainx + (mainw - (ginfo_wx2 - ginfo_wx1)) / 2, mainy + (mainh - (ginfo_wy2 - ginfo_wy1)) / 2, ginfo_wx2 - ginfo_wx1, ginfo_wy2 - ginfo_wy1, true
+	gsel 1, 1
+
+	gsel 0	// 操作先はメインに戻す(19/05/01修正点)
+	return
+
+*confirmSetting	// 変更内容を反映して閉じる
+	gosub *cancelSetting
+	
+	// 変更データ反映
+	soundFade = inputFade
+	if (deviceSelect != inputSelect) {
+		deviceSelect = inputSelect
+		gosub *fileReload
+	}
+	
+	return
+
+*cancelSetting	// 単に閉じる
+	gsel 1, -1
+	EnableWindow hMain, 1
+	gsel 0, 1
+	return
+
+/* システム割り込み処理 */
+*error	// 例外エラー
+	dialog "原因不明のエラーが発生しました。(エラーコード: " + wParam + ")\n保存されていないプロファイルは破棄されます。", 1, TITLE_APP
+	goto *exit2
+	
+*exit	// 通常終了処理
+	if (iParam == 0) {
+		// 子ウィンドウからの割り込み
+		if (wParam == 1) : gosub *cancelSetting : return
+	}
+	
+	gosub *fileConfirm	// ファイル変更確認
+	
+*exit2	// エラー処理からの最低限の終了処理
+	DestroyMenu hMenu(3)	// 右メニュー解放
+	
+	/* hspdsp終了処理 */
+	repeat 30
+		dsp_SetActiveSel cnt
+		dsp_Stop
+		dsp_Close
+	loop
+	dsp_Exit
+	
+	trayiconclose	// トレイアイコン削除
+	
+	/* 設定ファイル書き込み */
+	chdir sysDir
+	setini "settings.ini"
+	writeini "device", "select",  deviceSelect	// 選択出力デバイス
+	writeini "mode", "continue", enableContinue	// 連続再生有効
+	writeini "mode", "fade",     enableFade		// フェード有効
+	writeini "mode", "mute",     enableMute		// ミュート有効
+	writeini "mode", "tray",     enableTray		// トレイ格納有効
+	writeini "volume", "bgm",   soundVolume(0)	// BGM音量
+	writeini "volume", "se",    soundVolume(1)	// SE音量
+	writeini "volume", "other", soundVolume(2)	// OTHER音量
+	writeini "volume", "fade",  soundFade		// フェードの長さ
+	
+	end
+	end
