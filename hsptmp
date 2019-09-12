@@ -19,7 +19,7 @@
 #include "wgini.as"
 
 /* システム定数 */
-#define TITLE_VER "ver.1.03"
+#define TITLE_VER "ver.1.04"
 #define TITLE_APP "Numbers Player"
 #define TITLE_NAME TITLE_APP + " - " + fileTitle
 
@@ -44,6 +44,7 @@
 #enum IDM_EXIT		// 終了
 #enum IDM_CONTINUE	// 連続再生
 #enum IDM_FADE		// フェード
+#enum IDM_LOOP		// OTHERループモード
 #enum IDM_MUTE		// ミュート
 #enum IDM_TRAY		// トレイへ格納
 #enum IDM_SETTING	// サウンド設定
@@ -86,6 +87,7 @@
 	getini "device", "select",  deviceSelect	// 選択出力デバイス
 	getini "mode", "continue", enableContinue	// 連続再生有効
 	getini "mode", "fade",     enableFade		// フェード有効
+	getini "mode", "loop",     enableLoop		// OTHERループ有効
 	getini "mode", "mute",     enableMute		// ミュート有効
 	getini "mode", "tray",     enableTray		// トレイ格納有効
 	getini "volume", "bgm",   soundVolume(0)	// BGM音量
@@ -128,6 +130,7 @@
 	hMenu(2) = stat
 		AppendMenu hMenu(2), $8 * enableContinue, IDM_CONTINUE, "BGM連続再生(&C)\tShift+C"
 		AppendMenu hMenu(2), $8 * enableFade, IDM_FADE, "BGMフェードアウト(&F)\tShift+F"
+		AppendMenu hMenu(2), $8 * enableLoop, IDM_LOOP, "OTEHRループ再生(&L)\tAlt+L"
 		AppendMenu hMenu(2), $8 * enableMute, IDM_MUTE, "全音ミュート(&M)\tCtrl+M"
 		AppendMenu hMenu(2), $800, 0, ""
 		AppendMenu hMenu(2), $8 * enableTray, IDM_TRAY, "最小化時トレイへ格納(&T)\tCtrl+T"
@@ -302,8 +305,13 @@
 		if (activeOther(cnt) == 0) : continue
 		dsp_SetActiveSel cnt + 10
 		if (remainLen == 0) {
-			sendmsg objinfo_hwnd(cnt + 10 + nButton), $F1, 0	/* (選択解除)BM_SETCHECK */
-			activeOther(cnt) = 0
+			if (cnt >= 10 && enableLoop == 1) {
+				dsp_SetSeek2 0
+				dsp_Play2
+			} else {
+				sendmsg objinfo_hwnd(cnt + 10 + nButton), $F1, 0	/* (選択解除)BM_SETCHECK */
+				activeOther(cnt) = 0
+			}
 		}
 	loop
 	
@@ -337,6 +345,9 @@
 				swbreak
 			case IDM_FADE	// フェード
 				gosub *switchFade
+				swbreak
+			case IDM_LOOP	// OTHERループ
+				gosub *switchLoop
 				swbreak
 			case IDM_MUTE	// ミュート
 				gosub *switchMute
@@ -420,6 +431,10 @@
 		case 'F'
 			// Shift + F (フェード)
 			getkey tempInt, 16 : if (tempInt == 1) : gosub *switchFade
+			swbreak
+		case 'L'
+			// Alt + L (OTHERループ)
+			getkey tempInt, 18 : if (tempInt == 1) : gosub *switchLoop
 			swbreak
 		case 'M'
 			// Ctrl + M (ミュート)
@@ -559,6 +574,17 @@
 	} else {
 		CheckMenuItem hMenu(2), IDM_FADE, $8
 		enableFade = 1
+	}
+	return
+
+*switchLoop	// OTHERループ
+	GetMenuState hMenu(2), IDM_LOOP, $0	 /* MF_BYCOMMAND */
+	if (stat & $8 /* MF_CHECKED */) {
+		CheckMenuItem hMenu(2), IDM_LOOP, $0
+		enableLoop = 0
+	} else {
+		CheckMenuItem hMenu(2), IDM_LOOP, $8
+		enableLoop = 1
 	}
 	return
 
@@ -955,6 +981,7 @@
 	writeini "device", "select",  deviceSelect	// 選択出力デバイス
 	writeini "mode", "continue", enableContinue	// 連続再生有効
 	writeini "mode", "fade",     enableFade		// フェード有効
+	writeini "mode", "loop",     enableLoop		// OTHERループ有効
 	writeini "mode", "mute",     enableMute		// ミュート有効
 	writeini "mode", "tray",     enableTray		// トレイ格納有効
 	writeini "volume", "bgm",   soundVolume(0)	// BGM音量
