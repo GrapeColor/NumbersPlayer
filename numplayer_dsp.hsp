@@ -8,6 +8,7 @@
 #pack "_settings.ini"
 
 #include "user32.as"
+#include "gdi32.as"
 #uselib "imm32.dll"
 	#func ImmAssociateContext "ImmAssociateContext" int, int
 
@@ -19,7 +20,7 @@
 #include "wgini.as"
 
 /* システム定数 */
-#define TITLE_VER "ver.1.04"
+#define TITLE_VER "ver.1.05"
 #define TITLE_APP "Numbers Player"
 #define TITLE_NAME TITLE_APP + " - " + fileTitle
 
@@ -84,16 +85,17 @@
 	if (strsize = -1) : bcopy "_settings.ini", "settings.ini"
 
 	setini "settings.ini"
-	getini "device", "select",  deviceSelect	// 選択出力デバイス
+	getini "device", "select", deviceSelect	// 選択出力デバイス
 	getini "mode", "continue", enableContinue	// 連続再生有効
 	getini "mode", "fade",     enableFade		// フェード有効
 	getini "mode", "loop",     enableLoop		// OTHERループ有効
 	getini "mode", "mute",     enableMute		// ミュート有効
 	getini "mode", "tray",     enableTray		// トレイ格納有効
-	getini "volume", "bgm",   soundVolume(0)	// BGM音量
-	getini "volume", "se",    soundVolume(1)	// SE音量
-	getini "volume", "other", soundVolume(2)	// OTHER音量
-	getini "volume", "fade",  soundFade			// フェードの長さ
+	getini "volume", "bgm",      soundVolume(0)	// BGM音量
+	getini "volume", "se",       soundVolume(1)	// SE音量
+	getini "volume", "other",    soundVolume(2)	// OTHER音量
+	getini "volume", "fade",     soundFade		// フェードの長さ
+	getini "volume", "interval", soundInterval	// インターバルの長さ
 	
 /* デバイス初期化 */
 	dsp_Init	// hspdsp初期化
@@ -144,9 +146,6 @@
 
 	SetMenu hWnd, hMenu(0)
 	DrawMenuBar hWnd
-
-	/* ツールチップ */
-	SetToolTips $1
 	
 	/* 見出しラベル */
 	array = "BGM (Shift + )", "SE (Ctrl + )", "OTHER (Alt + )"
@@ -158,6 +157,9 @@
 
 	/* 音量ラベル */
 	font "Yu Gothic UI", 16
+	mref BMSCR, 67
+	CreateFontIndirect varptr( BMSCR(49) )
+	hTooltipsFont = stat
 
 	array = "BGM音量", "SE音量", "OTHER音量"
 	repeat 3
@@ -166,7 +168,11 @@
 		mes array(cnt)
 	loop
 
-	/* ボリュームコントロール */
+	/* ツールチップ */
+	SetToolTips $1 | $40
+	sendmsg objinfo_hwnd(stat), $30, hTooltipsFont, 0	/* WM_SETFONT */
+
+	/* 音量コントロール */
 	array = "Shift + ↑/↓", "Ctrl + ↑/↓", "Alt + ↑/↓"
 	repeat 3
 		pos ginfo_winx - UI_MARGIN - VOLUME_WIDTH, UI_MARGIN + ( VOLUME_HEIGHT + RADIO_WIDTH + UI_PADDING ) * cnt
@@ -228,7 +234,7 @@
 
 /* 設定ダイアログ */
 *win1
-	screen 1, 480, 148, screen_hide + screen_fixedsize
+	screen 1, 480, 198, screen_hide + screen_fixedsize
 	hSetting = hWnd
 	title "サウンド設定"
 	
@@ -253,6 +259,14 @@
 	SetWindowLong hTemp, -16, stat | $2000	// 数値のみ入力
 	ImmAssociateContext hTemp, 0	// IME無効化
 
+	pos UI_MARGIN, ginfo_cy + UI_PADDING
+	mes "インターバルの長さ [ミリ秒]"
+	input inputInterval, , , 4
+	hTemp = objinfo_hwnd(stat)
+	GetWindowLong hTemp, -16
+	SetWindowLong hTemp, -16, stat | $2000	// 数値のみ入力
+	ImmAssociateContext hTemp, 0	// IME無効化
+
 	objsize BUTTON_WIDTH
 	pos ginfo_winx - UI_MARGIN - BUTTON_WIDTH * 2, ginfo_cy + UI_PADDING
 	button gosub "OK", *confirmSetting
@@ -263,7 +277,7 @@
 /* コマンドラインからのプロファイル読み込み */
 	gsel 0, 1
 
-	wait 0	// 描画待ち
+	wait	// 描画待ち
 	if (dir_cmdline != "") {
 		tempPath = dir_cmdline
 		strrep tempPath, "\"", ""
@@ -826,6 +840,7 @@
 			dsp_SetVolume 0, convVol( soundVolume(0) - int(10.0 * soundVolume(0) / soundFade * cnt) )
 			await 10
 		loop
+		wait soundInterval / 10
 		fadeNow = 0
 	}
 
@@ -923,6 +938,7 @@
 	inputSelect = deviceSelect
 	sendmsg objinfo_hwnd(0), $14E, inputSelect	/* CB_SETCURSEL */
 	objprm 1, soundFade
+	objprm 2, soundInterval
 
 	// ウィンドウ表示
 	MoveWindow hWnd, mainx + (mainw - (ginfo_wx2 - ginfo_wx1)) / 2, mainy + (mainh - (ginfo_wy2 - ginfo_wy1)) / 2, ginfo_wx2 - ginfo_wx1, ginfo_wy2 - ginfo_wy1, true
@@ -936,6 +952,7 @@
 	
 	// 変更データ反映
 	soundFade = inputFade
+	soundInterval = inputInterval
 	if (deviceSelect != inputSelect) {
 		deviceSelect = inputSelect
 		gosub *fileReload
@@ -974,20 +991,23 @@
 	dsp_Exit
 	
 	trayiconclose	// トレイアイコン削除
+
+	DeleteObject hTooltipsFont	// フォントオブジェクト破棄
 	
 	/* 設定ファイル書き込み */
 	chdir sysDir
 	setini "settings.ini"
-	writeini "device", "select",  deviceSelect	// 選択出力デバイス
+	writeini "device", "select", deviceSelect	// 選択出力デバイス
 	writeini "mode", "continue", enableContinue	// 連続再生有効
 	writeini "mode", "fade",     enableFade		// フェード有効
 	writeini "mode", "loop",     enableLoop		// OTHERループ有効
 	writeini "mode", "mute",     enableMute		// ミュート有効
 	writeini "mode", "tray",     enableTray		// トレイ格納有効
-	writeini "volume", "bgm",   soundVolume(0)	// BGM音量
-	writeini "volume", "se",    soundVolume(1)	// SE音量
-	writeini "volume", "other", soundVolume(2)	// OTHER音量
-	writeini "volume", "fade",  soundFade		// フェードの長さ
+	writeini "volume", "bgm",      soundVolume(0)	// BGM音量
+	writeini "volume", "se",       soundVolume(1)	// SE音量
+	writeini "volume", "other",    soundVolume(2)	// OTHER音量
+	writeini "volume", "fade",     soundFade		// フェードの長さ
+	writeini "volume", "interval", soundInterval	// インターバルの長さ
 	
 	end
 	end
