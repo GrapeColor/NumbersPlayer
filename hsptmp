@@ -20,14 +20,14 @@
 #include "wgini.as"
 
 /* システム定数 */
-#define TITLE_VER "ver.1.05"
+#define TITLE_VER "1.05"
 #define TITLE_APP "Numbers Player"
 #define TITLE_NAME TITLE_APP + " - " + fileTitle
 
 /* マクロ */
 #define ctype convVol(%1) int(log10((0.001 + %1) / 100) * 2000)
 #define remainLen dsp_Info(2) - dsp_Info(3)
-#define bgmDisp(%1) sendmsg hStatus, $401, 0, "BGM: " + %1 : trayicontip "BGM: " + %1	/* SB_SETTEXTA */
+#define bgmDisp(%1) trayicontip "BGM: " + %1 : sendmsg hStatus, $401, 0, "BGM: " + %1	/* SB_SETTEXTA */
 
 /* レイアウト定数 */
 #define UI_MARGIN 12
@@ -82,10 +82,10 @@
 
 	/* 設定ファイル読み込み */
 	exist "settings.ini"
-	if (strsize = -1) : bcopy "_settings.ini", "settings.ini"
+	if (strsize == -1) : bcopy "_settings.ini", "settings.ini"
 
 	setini "settings.ini"
-	getini "device", "select", deviceSelect	// 選択出力デバイス
+	getini "device", "select", deviceSelect		// 選択出力デバイス
 	getini "mode", "continue", enableContinue	// 連続再生有効
 	getini "mode", "fade",     enableFade		// フェード有効
 	getini "mode", "loop",     enableLoop		// OTHERループ有効
@@ -277,7 +277,7 @@
 /* コマンドラインからのプロファイル読み込み */
 	gsel 0, 1
 
-	wait 0	// 描画待ち
+	wait	// 描画待ち
 	if (dir_cmdline != "") {
 		tempPath = dir_cmdline
 		strrep tempPath, "\"", ""
@@ -781,6 +781,8 @@
 	return
 
 *soundDelete	// 音声ファイルを削除(onNumberに削除したい番号)
+	if (soundPath(onNumber) == "") : return
+	
 	if (onNumber == playingBgm) : gosub *changeBgm
 	if (onNumber >= 10) : gosub *stopOther
 
@@ -873,14 +875,13 @@
 	
 	dsp_SetActiveSel onNumber
 	if ( onNumber >= 20 && dsp_GetState() == 2 && remainLen != 0 ) {	// OTHER再生中の場合
-		dsp_Stop
-		activeOther(onNumber - 10) = 0
-		sendmsg objinfo_hwnd(onNumber + nButton), $F1, 0	/* (選択解除)BM_SETCHECK */
+		gosub *stopOther
 		return
 	}
 	
 	dsp_SetSeek2 0
 	dsp_Play2
+	logmes stat
 	
 	activeOther(onNumber - 10) = 1
 	sendmsg objinfo_hwnd(onNumber + nButton), $F1, 1	/* (選択)BM_SETCHECK */
