@@ -296,40 +296,46 @@
 	oncmd gosub *command0, $111		/* WM_COMMAND */
 	oncmd gosub *sysCommand, $112	/* WM_SYSCOMMAND */
 	oncmd gosub *changeVolume, $114	/* WM_HSCROLL */
+	oncmd gosub *seekBgm, $20A		/* WM_MOUSEWHEEL */
 	
 	DandD_SetSubLabel *dropFile	// D&Dイベント
 	DandD_SetWindow 1	// D&D許可
 	
 /* メインループ */
 *main
-	wait 10
-	
-	/* ループ・連続再生処理 */
-	dsp_SetActiveSel playingBgm
-	if (playingBgm != -1 && remainLen == 0) {
-		if (enableContinue == 1) {
-			gosub *nextBgm
-		} else {
-			gosub *playLoop
-		}
-	}
-
-	/* SE・OTHERの選択解除処理 */
-	repeat 20
-		if (activeOther(cnt) == 0) : continue
-		dsp_SetActiveSel cnt + 10
-		if (remainLen == 0) {
-			if (cnt >= 10 && enableLoop == 1) {
-				dsp_SetSeek2 0
-				dsp_Play2
-			} else {
-				sendmsg objinfo_hwnd(cnt + 10 + nButton), $F1, 0	/* (選択解除)BM_SETCHECK */
-				activeOther(cnt) = 0
+	repeat
+		wait 10
+		
+		/* ループ・連続再生処理 */
+		if (playingBgm != -1) {
+			dsp_SetActiveSel playingBgm
+			sendmsg hStatus, $401, 1, strf("%02d:%02d", dsp_Info(3) / 100 / 60, dsp_Info(3) / 100 \ 60)	/* SB_SETTEXTA */
+			
+			if (remainLen == 0) {	// BGM残り再生時間0
+				if (enableContinue == 1) {	// 連続再生有効
+					gosub *nextBgm
+				} else {
+					gosub *playLoop
+				}
 			}
 		}
-	loop
 	
-	goto *main
+		/* SE・OTHERの選択解除処理 */
+		repeat 20
+			if (activeOther(cnt) == 0) : continue
+			dsp_SetActiveSel cnt + 10
+			if (remainLen == 0) {
+				if (cnt >= 10 && enableLoop == 1) {
+					dsp_SetSeek2 0
+					dsp_Play2
+				} else {
+					sendmsg objinfo_hwnd(cnt + 10 + nButton), $F1, 0	/* (選択解除)BM_SETCHECK */
+					activeOther(cnt) = 0
+				}
+			}
+		loop
+	
+	loop
 
 /* ウィンドウメッセージ・UI処理 */
 *command0	// メニューバーイベント(WM_COMMAND)
@@ -414,7 +420,6 @@
 	return
 
 *keyDown	// キー割り込み(WM_KEYDOWN, WM_SYSKEYDOWN)
-	logmes "KEYCODE: " + wParam
 	switch wParam
 		case 18 : case 121	// Alt, F10
 			return
@@ -448,7 +453,11 @@
 			swbreak
 		case 'L'
 			// Alt + L (OTHERループ)
-			getkey tempInt, 18 : if (tempInt == 1) : gosub *switchLoop
+			getkey tempInt, 18
+			if (tempInt == 1) {
+				gosub *switchLoop
+				sysProcessed = 1	// システムキー処理済みフラグ
+			}
 			swbreak
 		case 'M'
 			// Ctrl + M (ミュート)
@@ -477,7 +486,11 @@
 			tempNum = -1
 			getkey tempInt, 16 : if (tempInt == 1) : tempNum = 0	// Shift(BGM)
 			getkey tempInt, 17 : if (tempInt == 1) : tempNum = 1	// Ctrl(SE)
-			getkey tempInt, 18 : if (tempInt == 1) : tempNum = 2	// Alt(OTHER)
+			getkey tempInt, 18	// Alt(OTHER)
+			if (tempInt == 1) {
+				tempNum = 2
+				sysProcessed = 1	// システムキー処理済みフラグ
+			}
 			if (tempNum == -1) : return
 
 			// 音量を+10する
@@ -493,7 +506,11 @@
 			tempNum = -1
 			getkey tempInt, 16 : if (tempInt == 1) : tempNum = 0	// Shift(BGM)
 			getkey tempInt, 17 : if (tempInt == 1) : tempNum = 1	// Ctrl(SE)
-			getkey tempInt, 18 : if (tempInt == 1) : tempNum = 2	// Alt(OTHER)
+			getkey tempInt, 18	// Alt(OTHER)
+			if (tempInt == 1) {
+				tempNum = 2
+				sysProcessed = 1	// システムキー処理済みフラグ
+			}
 			if (tempNum == -1) : return
 			
 			// 音量を-10する
@@ -524,7 +541,6 @@
 					onNumber += 20
 					gosub *playOther
 					sysProcessed = 1	// システムキー処理済みフラグ
-					return
 				}
 			}
 			swbreak
@@ -637,11 +653,8 @@
 
 /* ファイル操作処理 */
 *fileNew	// プロファイル新規作成
-	if (fileChanged != 0) {	// 変更保存確認
-		MessageBox hwnd, "プロファイルの変更内容を保存しますか。", TITLE_NAME, 0x43
-		if (stat = 2) : return
-		if (stat = 6) : gosub *fileOver
-	}
+	gosub *fileConfirm
+	if (stat == 2) : return
 
 	// データ初期化
 	repeat 30
@@ -709,10 +722,10 @@
 	return
 
 *fileConfirm	// ファイル変更確認
-	if (fileChanged == 0) : return	// 変更なし
+	if (fileChanged == 0) : return 0	// 変更なし
 	
 	MessageBox hwnd, "プロファイルの変更内容を保存しますか。", TITLE_NAME, 0x43
-	if (stat = 2) : return
+	if (stat = 2) : return stat
 	if (stat = 6) : gosub *fileOver
 	return
 
@@ -749,11 +762,9 @@
 	// プロファイルが開かれた場合
 	tempPath = refstr
 	if (getpath(tempPath, 2) == ".npp") {
-		if (fileChanged != 0) {	// 変更保存確認
-			MessageBox hwnd, "プロファイルの変更内容を保存しますか。", TITLE_NAME, 0x43
-			if (stat = 2) : return
-			if (stat = 6) : gosub *fileOver
-		}
+		gosub *fileConfirm
+		if (stat == 2) : return
+		
 		gosub *fileLoad
 		return
 	}
@@ -833,9 +844,8 @@
 *playBgm	// BGM再生(selBgmに再生したい番号)
 	// フェード処理
 	dsp_SetActiveSel playingBgm
-	if (enableFade == 1 && playingBgm != -1 && remainLen != 0) {
-		if (fadeNow == 1) : return
-		
+	if (enableFade == 1 && playingBgm != -1 && remainLen != 0 && fadeNow == 0 && previousSeek == 0) {
+		sendmsg hStatus, $401, 1, "フェード中..."	/* SB_SETTEXTA */
 		fadeNow = 1
 		repeat soundFade / 10, 1
 			dsp_SetActiveSel playingBgm
@@ -844,6 +854,7 @@
 		loop
 		wait soundInterval / 10
 		fadeNow = 0
+		sendmsg hStatus, $401, 1, ""	/* SB_SETTEXTA */
 	}
 
 	// 再生中BGMの停止
@@ -858,16 +869,16 @@
 	
 	if (soundPath(selBgm) == "") : return
 
-*playLoop	// ループ再生(selBgmに再生したい番号)
-	// 再生開始処理
+	// 次の曲を選択
+	bgmDisp soundName(playingBgm)
 	dsp_SetActiveSel playingBgm
+	
+	if (previousSeek != 0) : return	// シークによる曲変更
+
+*playLoop	// ループ再生(selBgmに再生したい番号)]
+	// 再生開始処理
 	dsp_SetSeek2 0
 	dsp_Play2
-	
-	playingBgm = selBgm
-	
-	bgmDisp soundName(playingBgm)
-	
 	return
 
 *playOther	// SE・OTHER再生(onNumberに再生したい番号)
@@ -881,7 +892,6 @@
 	
 	dsp_SetSeek2 0
 	dsp_Play2
-	logmes stat
 	
 	activeOther(onNumber - 10) = 1
 	sendmsg objinfo_hwnd(onNumber + nButton), $F1, 1	/* (選択)BM_SETCHECK */
@@ -901,6 +911,24 @@
 		activeOther(cnt) = 0
 		sendmsg objinfo_hwnd(cnt + nButton + 10), $F1, 0	/* (選択解除)BM_SETCHECK */
 	loop
+	return
+
+*seekBgm	// BGMのシーク
+	if (playingBgm == -1) : return
+	
+	if (LOWORD(wParam) == $4) { /* MK_SHIFT */
+		dsp_SetActiveSel playingBgm
+		
+		previousSeek = limit(dsp_Info(3) - 500 * (wParam / abs(wParam)), , dsp_Info(2))
+		if (previousSeek < 0) {
+			gosub *previousBgm
+			dsp_SetSeek2 limit(dsp_Info(2) + previousSeek, 0, )
+			dsp_Play2
+		} else {
+			dsp_SetSeek2 previousSeek
+		}
+		previousSeek = 0
+	}
 	return
 
 *nextBgm	// 次のBGM再生
@@ -979,6 +1007,7 @@
 	}
 	
 	gosub *fileConfirm	// ファイル変更確認
+	if (stat == 2) : return
 	
 *exit2	// エラー処理からの最低限の終了処理
 	DestroyMenu hMenu(3)	// 右メニュー解放
