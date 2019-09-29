@@ -132,7 +132,7 @@
 	CreatePopupMenu	// 設定
 	hMenu(2) = stat
 		AppendMenu hMenu(2), $8 * enableContinue, IDM_CONTINUE, "BGM連続再生(&C)\tShift+C"
-		AppendMenu hMenu(2), $8 * enableFade, IDM_FADE, "BGMフェードアウト(&F)\tShift+F"
+		// AppendMenu hMenu(2), $8 * enableFade, IDM_FADE, "BGMフェードアウト(&F)\tShift+F"
 		AppendMenu hMenu(2), $8 * enableLoop, IDM_LOOP, "OTEHRループ再生(&L)\tAlt+L"
 		AppendMenu hMenu(2), $8 * enablePush, IDM_PUSH, "OTEHRプッシュトゥ再生(&P)\tAlt+P"
 		AppendMenu hMenu(2), $8 * enableMute, IDM_MUTE, "全音ミュート(&M)\tCtrl+M"
@@ -296,6 +296,7 @@
 	oncmd gosub *keyDown, $100		/* WM_KEYDOWN */
 	oncmd gosub *keyUp, $101		/* WM_KEYUP */
 	oncmd gosub *keyDown, $104		/* WM_SYSKEYDOWN */
+	oncmd gosub *keyUp, $105		/* WM_SYSKEYUP */
 	oncmd gosub *command0, $111		/* WM_COMMAND */
 	oncmd gosub *sysCommand, $112	/* WM_SYSCOMMAND */
 	oncmd gosub *changeVolume, $114	/* WM_HSCROLL */
@@ -453,10 +454,10 @@
 			// Shift + C (連続再生)
 			getkey tempInt, 16 : if (tempInt == 1) : gosub *switchContinue
 			swbreak
-		case 'F'
-			// Shift + F (フェード)
-			getkey tempInt, 16 : if (tempInt == 1) : gosub *switchFade
-			swbreak
+		// case 'F'
+		// 	// Shift + F (フェード)
+		// 	getkey tempInt, 16 : if (tempInt == 1) : gosub *switchFade
+		// 	swbreak
 		case 'L'
 			// Alt + L (OTHERループ)
 			getkey tempInt, 18
@@ -542,6 +543,7 @@
 				onNumber = (wParam - 9) \ 10
 				
 				// Shift + 0 ～ 9 (BGM)
+				if (lParam & $40000000) : return	// キーリピート回避
 				getkey tempInt, 16 : if (tempInt == 1) {
 					gosub *changeBgm
 				}
@@ -551,6 +553,7 @@
 					gosub *playOther
 				}
 				// Alt + 0 ～ 9 (OTHER)
+				if (lParam & $40000000) : return	// キーリピート回避
 				getkey tempInt, 18 : if (tempInt == 1) {
 					onNumber += 20
 					gosub *playOther
@@ -562,6 +565,7 @@
 	return
 	
 *keyUp	// キー割り込み(WM_KEYUP)
+	logmes wParam
 	switch wParam
 		default
 			// メインキーボード数字キー(テンキー未対応)
@@ -1071,7 +1075,7 @@
 	setini "settings.ini"
 	writeini "device", "select", deviceSelect	// 選択出力デバイス
 	writeini "mode", "continue", enableContinue	// 連続再生有効
-	writeini "mode", "fade",     enableFade		// フェード有効
+	// writeini "mode", "fade",     enableFade		// フェード有効
 	writeini "mode", "loop",     enableLoop		// OTHERループ有効
 	writeini "mode", "push",     enablePush		// OTHERプッシュトゥ再生有効
 	writeini "mode", "mute",     enableMute		// ミュート有効
