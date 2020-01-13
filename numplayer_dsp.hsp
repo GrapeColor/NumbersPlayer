@@ -132,7 +132,7 @@
 	CreatePopupMenu	// 設定
 	hMenu(2) = stat
 		AppendMenu hMenu(2), $8 * enableContinue, IDM_CONTINUE, "BGM連続再生(&C)\tShift+C"
-		// AppendMenu hMenu(2), $8 * enableFade, IDM_FADE, "BGMフェードアウト(&F)\tShift+F"
+		AppendMenu hMenu(2), $8 * enableFade, IDM_FADE, "BGMフェードアウト(&F)\tShift+F"
 		AppendMenu hMenu(2), $8 * enableLoop, IDM_LOOP, "OTEHRループ再生(&L)\tAlt+L"
 		AppendMenu hMenu(2), $8 * enablePush, IDM_PUSH, "OTEHRプッシュトゥ再生(&P)\tAlt+P"
 		AppendMenu hMenu(2), $8 * enableMute, IDM_MUTE, "全音ミュート(&M)\tCtrl+M"
@@ -454,10 +454,10 @@
 			// Shift + C (連続再生)
 			getkey tempInt, 16 : if (tempInt == 1) : gosub *switchContinue
 			swbreak
-		// case 'F'
-		// 	// Shift + F (フェード)
-		// 	getkey tempInt, 16 : if (tempInt == 1) : gosub *switchFade
-		// 	swbreak
+		case 'F'
+			// Shift + F (フェード)
+			getkey tempInt, 16 : if (tempInt == 1) : gosub *switchFade
+			swbreak
 		case 'L'
 			// Alt + L (OTHERループ)
 			getkey tempInt, 18
@@ -565,7 +565,6 @@
 	return
 	
 *keyUp	// キー割り込み(WM_KEYUP)
-	logmes wParam
 	switch wParam
 		default
 			// メインキーボード数字キー(テンキー未対応)
@@ -967,7 +966,7 @@
 		
 		previousSeek = limit(dsp_Info(3) - 500 * (wParam / abs(wParam)), , dsp_Info(2))
 		if (previousSeek < 0) {
-			gosub *previousBgm
+			if (enableContinue == 1) : gosub *previousBgm
 			dsp_SetSeek2 limit(dsp_Info(2) + previousSeek, 0, )
 			dsp_Play2
 		} else {
@@ -1075,7 +1074,7 @@
 	setini "settings.ini"
 	writeini "device", "select", deviceSelect	// 選択出力デバイス
 	writeini "mode", "continue", enableContinue	// 連続再生有効
-	// writeini "mode", "fade",     enableFade		// フェード有効
+	writeini "mode", "fade",     enableFade		// フェード有効
 	writeini "mode", "loop",     enableLoop		// OTHERループ有効
 	writeini "mode", "push",     enablePush		// OTHERプッシュトゥ再生有効
 	writeini "mode", "mute",     enableMute		// ミュート有効

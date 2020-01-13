@@ -5,7 +5,6 @@
 ;!version=version.txt
 ;!icon=img/icon.ico
 ;!lang=1041
-;!upx=0
 ;!hide=1
 _settings.ini
 +start.ax
